@@ -2,9 +2,15 @@ package net.tofvesson.networking
 
 import java.lang.reflect.Field
 import java.nio.ByteBuffer
-import kotlin.experimental.and
+import kotlin.experimental.or
+import java.security.NoSuchAlgorithmException
+import java.security.MessageDigest
 
-class SyncHandler {
+
+/**
+ * @param permissiveMismatchCheck This should essentially never be set to true aside from some *very* odd edge cases
+ */
+class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private val toSync: ArrayList<Pair<Any, Int>> = ArrayList()
 
     fun registerSyncObject(value: Any){
@@ -12,7 +18,9 @@ class SyncHandler {
     }
 
     fun unregisterSyncObject(value: Any){
-        toSync.remove(value)
+        for(i in toSync.indices.reversed())
+            if(toSync[i].first == value)
+                toSync.removeAt(i)
     }
 
     fun serialize(): ByteArray{
@@ -40,7 +48,6 @@ class SyncHandler {
         val headerSize = (headerBits shr 3) + (if((headerBits and 7) != 0) 1 else 0)
         var headerIndex = 0
         var dataIndex = headerSize
-        var totalSize = headerSize
         for((entry, _) in toSync){
             val result =
                     if(entry is Class<*>) writeClass(entry, syncData, dataIndex, headerIndex)
@@ -51,11 +58,24 @@ class SyncHandler {
     }
 
     fun generateMismatchCheck(): ByteArray {
-        val bitCount = computeBitHeaderCount()
-        val outBuffer = ByteArray(varIntSize(bitCount.toLong()) + varIntSize(toSync.size.toLong()))
-        writeVarInt(outBuffer, 0, bitCount.toLong())
-        writeVarInt(outBuffer, varIntSize(bitCount.toLong()), toSync.size.toLong())
-        return outBuffer
+        val builder = StringBuilder()
+        for((entry, _) in toSync)
+            for(field in (entry as? Class<*> ?: entry::class.java).declaredFields){
+                if((entry is Class<*> && field.modifiers and 8 == 0) || (entry !is Class<*> && field.modifiers and 8 != 0)) continue
+                val annotation = field.getAnnotation(SyncedVar::class.java)
+                if(annotation!=null)
+                    builder
+                            .append(if(permissiveMismatchCheck) field.type.name else field.toGenericString())
+                            .append(if(annotation.floatEndianSwap) 1 else 0)
+                            .append(if(annotation.noCompress) 1 else 0)
+                            .append(if(annotation.nonNegative) 1 else 0)
+            }
+
+        return try {
+            MessageDigest.getInstance("SHA-1").digest(builder.toString().toByteArray())
+        } catch (e: NoSuchAlgorithmException) {
+            builder.toString().toByteArray()
+        }
     }
 
     fun doMismatchCheck(check: ByteArray): Boolean {
@@ -117,9 +137,9 @@ class SyncHandler {
             return count
         }
         private fun writeBit(bit: Boolean, buffer: ByteArray, index: Int){
-            buffer[index shr 3] = buffer[index shr 3] and (1 shl (index and 7)).toByte()
+            buffer[index shr 3] = buffer[index shr 3].or(((if(bit) 1 else 0) shl (index and 7)).toByte())
         }
-        private fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index shr 8].toInt() and (1 shl (index and 7)) != 0
+        private fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
 
         private fun computeObjectSize(value: Any) = computeTypeSize(value.javaClass, value)
         private fun computeClassSize(value: Class<*>) = computeTypeSize(value, null)
