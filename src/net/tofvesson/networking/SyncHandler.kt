@@ -2,7 +2,6 @@ package net.tofvesson.networking
 
 import java.lang.reflect.Field
 import java.nio.ByteBuffer
-import kotlin.experimental.or
 import java.security.NoSuchAlgorithmException
 import java.security.MessageDigest
 
@@ -10,30 +9,46 @@ import java.security.MessageDigest
 /**
  * @param permissiveMismatchCheck This should essentially never be set to true aside from some *very* odd edge cases
  */
-class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
-    private val toSync: ArrayList<Pair<Any, Int>> = ArrayList()
+class SyncHandler(defaultSerializers: Boolean = true, private val permissiveMismatchCheck: Boolean = false) {
+    private val toSync: ArrayList<Any> = ArrayList()
+    private val serializers: ArrayList<Serializer> = ArrayList()
+
+    init {
+        if(defaultSerializers) {
+            serializers.add(PrimitiveSerializer.singleton)
+            serializers.add(PrimitiveArraySerializer.singleton)
+        }
+    }
 
     fun registerSyncObject(value: Any){
-        if(!toSync.contains(value)) toSync.add(Pair(value, getBooleanFieldCount(value::class.java)))
+        if(!toSync.contains(value)) toSync.add(value)
     }
 
     fun unregisterSyncObject(value: Any){
-        for(i in toSync.indices.reversed())
-            if(toSync[i].first == value)
-                toSync.removeAt(i)
+        toSync.remove(value)
+    }
+
+    fun withSerializer(serializer: Serializer): SyncHandler {
+        if(!serializers.contains(serializer)) serializers.add(serializer)
+        return this
     }
 
     fun serialize(): ByteArray{
-        val headerBits = computeBitHeaderCount()
-        val headerSize = (headerBits shr 3) + (if((headerBits and 7) != 0) 1 else 0)
+        var headerSize = 0
+        var totalSize = 0
+        for(entry in toSync){
+            val result = if(entry is Class<*>) computeClassSize(entry) else computeObjectSize(entry)
+            totalSize += result.first
+            headerSize += result.second
+        }
+
         var headerIndex = 0
-        var dataIndex = headerSize
-        var totalSize = headerSize
-        for((entry, _) in toSync)
-            totalSize += if(entry is Class<*>) computeClassSize(entry) else computeObjectSize(entry)
+        var dataIndex = (headerSize shr 3) + (if(headerSize and 7 != 0) 1 else 0)
+
+        totalSize += dataIndex
 
         val buffer = ByteArray(totalSize)
-        for((entry, _) in toSync){
+        for(entry in toSync){
             val result =
                     if(entry is Class<*>) readClass(entry, buffer, dataIndex, headerIndex)
                     else readObject(entry, buffer, dataIndex, headerIndex)
@@ -44,11 +59,12 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     }
 
     fun deserialize(syncData: ByteArray){
-        val headerBits = computeBitHeaderCount()
-        val headerSize = (headerBits shr 3) + (if((headerBits and 7) != 0) 1 else 0)
+        var headerSize = 0
+        for(entry in toSync)
+            headerSize += (if(entry is Class<*>) computeClassSize(entry) else computeObjectSize(entry)).second
         var headerIndex = 0
-        var dataIndex = headerSize
-        for((entry, _) in toSync){
+        var dataIndex = (headerSize shr 3) + (if(headerSize and 7 != 0) 1 else 0)
+        for(entry in toSync){
             val result =
                     if(entry is Class<*>) writeClass(entry, syncData, dataIndex, headerIndex)
                     else writeObject(entry, syncData, dataIndex, headerIndex)
@@ -59,16 +75,15 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
 
     fun generateMismatchCheck(): ByteArray {
         val builder = StringBuilder()
-        for((entry, _) in toSync)
+        for(entry in toSync)
             for(field in (entry as? Class<*> ?: entry::class.java).declaredFields){
                 if((entry is Class<*> && field.modifiers and 8 == 0) || (entry !is Class<*> && field.modifiers and 8 != 0)) continue
                 val annotation = field.getAnnotation(SyncedVar::class.java)
-                if(annotation!=null)
-                    builder
-                            .append(if(permissiveMismatchCheck) field.type.name else field.toGenericString())
-                            .append(if(annotation.floatEndianSwap) 1 else 0)
-                            .append(if(annotation.noCompress) 1 else 0)
-                            .append(if(annotation.nonNegative) 1 else 0)
+                if(annotation!=null) {
+                    builder.append('{').append(if (permissiveMismatchCheck) field.type.name else field.toGenericString())
+                    for(flag in annotation.value) builder.append(flag)
+                    builder.append('}')
+                }
             }
 
         return try {
@@ -87,11 +102,29 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
         return true
     }
 
-    private fun computeBitHeaderCount(): Int {
-        var bitCount = 0
-        for((_, bits) in toSync)
-            bitCount += bits
-        return bitCount
+
+    private fun computeObjectSize(value: Any) = computeTypeSize(value.javaClass, value)
+    private fun computeClassSize(value: Class<*>) = computeTypeSize(value, null)
+    private fun computeTypeSize(type: Class<*>, value: Any?): Pair<Int, Int> {
+        var byteSize = 0
+        var bitSize = 0
+        for(field in type.declaredFields){
+            if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
+            val annotation = field.getAnnotation(SyncedVar::class.java)
+            field.trySetAccessible()
+            if(annotation!=null){
+                val result = getCompatibleSerializer(field.type).computeSize(field, SyncFlag.parse(annotation.value), value)
+                byteSize += result.first
+                bitSize += result.second
+            }
+        }
+        return Pair(byteSize, bitSize)
+    }
+    private fun getCompatibleSerializer(type: Class<*>): Serializer {
+        for(serializer in serializers)
+            if(serializer.canSerialize(type))
+                return serializer
+        throw UnsupportedTypeException("Cannot find a compatible serializer for $type")
     }
 
     private fun readObject(value: Any, buffer: ByteArray, offset: Int, bitOffset: Int) = readType(value.javaClass, value, buffer, offset, bitOffset)
@@ -104,8 +137,9 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
             if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
             val annotation = field.getAnnotation(SyncedVar::class.java)
             if(annotation != null){
-                if(field.type!=Boolean::class.java) localOffset += readValue(field, annotation, value, byteBuffer, localOffset)
-                else writeBit(field.getBoolean(value), buffer, localBitOffset++)
+                val result = getCompatibleSerializer(field.type).serialize(field, SyncFlag.parse(annotation.value), value, byteBuffer, localOffset, localBitOffset)
+                localOffset = result.first
+                localBitOffset = result.second
             }
         }
         return Pair(localOffset, localBitOffset)
@@ -121,212 +155,11 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
             if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
             val annotation = field.getAnnotation(SyncedVar::class.java)
             if(annotation != null){
-                if(field.type!=Boolean::class.java) localOffset += writeValue(field, annotation, value, byteBuffer, localOffset)
-                else field.setBoolean(value, readBit(buffer, localBitOffset++))
+                val result = getCompatibleSerializer(field.type).deserialize(field, SyncFlag.parse(annotation.value), value, byteBuffer, localOffset, localBitOffset)
+                localOffset = result.first
+                localBitOffset = result.second
             }
         }
         return Pair(localOffset, localBitOffset)
-    }
-
-    companion object {
-        private fun getBooleanFieldCount(type: Class<*>): Int {
-            var count = 0
-            for(field in type.declaredFields)
-                if(field.getAnnotation(SyncedVar::class.java)!=null && field.type==Boolean::class.java)
-                    ++count
-            return count
-        }
-        private fun writeBit(bit: Boolean, buffer: ByteArray, index: Int){
-            buffer[index shr 3] = buffer[index shr 3].or(((if(bit) 1 else 0) shl (index and 7)).toByte())
-        }
-        private fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
-
-        private fun computeObjectSize(value: Any) = computeTypeSize(value.javaClass, value)
-        private fun computeClassSize(value: Class<*>) = computeTypeSize(value, null)
-        private fun computeTypeSize(type: Class<*>, value: Any?): Int{
-            var byteSize = 0
-            for(field in type.declaredFields){
-                if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
-                val annotation = field.getAnnotation(SyncedVar::class.java)
-                field.trySetAccessible()
-                if(annotation!=null) byteSize += computeDataSize(field, annotation, value)
-            }
-            return byteSize
-        }
-        private fun computeDataSize(field: Field, annotation: SyncedVar, value: Any?): Int =
-                when(field.type){
-                    Byte::class.java -> 1
-                    Short::class.java ->
-                        if(annotation.noCompress) 2
-                        else varIntSize(
-                                if(annotation.nonNegative) field.getShort(value).toLong()
-                                else zigZagEncode(field.getShort(value).toLong())
-                        )
-                    Int::class.java ->
-                        if(annotation.noCompress) 4
-                        else varIntSize(
-                                if(annotation.nonNegative) field.getInt(value).toLong()
-                                else zigZagEncode(field.getInt(value).toLong())
-                        )
-                    Long::class.java ->
-                        if(annotation.noCompress) 8
-                        else varIntSize(
-                                if(annotation.nonNegative) field.getLong(value)
-                                else zigZagEncode(field.getLong(value))
-                        )
-                    Float::class.java ->
-                        if(annotation.noCompress) 4
-                        else varIntSize(
-                                if(annotation.floatEndianSwap) bitConvert(swapEndian(floatToInt(field.getFloat(value))))
-                                else bitConvert(floatToInt(field.getFloat(value)))
-                        )
-                    Double::class.java ->
-                        if(annotation.noCompress) 8
-                        else varIntSize(
-                                if(annotation.floatEndianSwap) swapEndian(doubleToLong(field.getDouble(value)))
-                                else doubleToLong(field.getDouble(value))
-                        )
-                    else -> 0
-                }
-
-        private fun readValue(field: Field, annotation: SyncedVar, value: Any?, buffer: ByteBuffer, offset: Int): Int =
-            when(field.type){
-                Byte::class.java ->{
-                    buffer.put(offset, field.getByte(value))
-                    1
-                }
-                Short::class.java ->
-                    if(annotation.noCompress){
-                        buffer.putShort(offset, field.getShort(value))
-                        2
-                    }
-                    else {
-                        val rawValue =
-                                if(annotation.nonNegative) field.getShort(value).toLong()
-                                else zigZagEncode(field.getShort(value).toLong())
-                        writeVarInt(buffer, offset, rawValue)
-                        varIntSize(rawValue)
-                    }
-                Int::class.java ->
-                    if(annotation.noCompress){
-                        buffer.putInt(offset, field.getInt(value))
-                        4
-                    }
-                    else {
-                        val rawValue =
-                                if(annotation.nonNegative) field.getInt(value).toLong()
-                                else zigZagEncode(field.getInt(value).toLong())
-                        writeVarInt(buffer, offset, rawValue)
-                        varIntSize(rawValue)
-                    }
-                Long::class.java ->
-                    if(annotation.noCompress){
-                        buffer.putLong(offset, field.getLong(value))
-                        8
-                    }
-                    else {
-                        val rawValue =
-                                if(annotation.nonNegative) field.getLong(value)
-                                else zigZagEncode(field.getLong(value))
-                        writeVarInt(buffer, offset, rawValue)
-                        varIntSize(rawValue)
-                    }
-                Float::class.java ->
-                    if(annotation.noCompress){
-                        buffer.putFloat(offset, field.getFloat(value))
-                        4
-                    }
-                    else{
-                        val rawValue =
-                                if(annotation.floatEndianSwap) bitConvert(swapEndian(floatToInt(field.getFloat(value))))
-                                else bitConvert(floatToInt(field.getFloat(value)))
-                        writeVarInt(buffer, offset, rawValue)
-                        varIntSize(rawValue)
-                    }
-                Double::class.java ->
-                    if(annotation.noCompress){
-                        buffer.putDouble(offset, field.getDouble(value))
-                        8
-                    }
-                    else{
-                        val rawValue =
-                                if(annotation.floatEndianSwap) swapEndian(doubleToLong(field.getDouble(value)))
-                                else doubleToLong(field.getDouble(value))
-                        writeVarInt(buffer, offset, rawValue)
-                        varIntSize(rawValue)
-                    }
-                else -> 0
-            }
-
-        private fun writeValue(field: Field, annotation: SyncedVar, value: Any?, buffer: ByteBuffer, offset: Int): Int =
-                when(field.type){
-                    Byte::class.java ->{
-                        field.setByte(value, buffer.get(offset))
-                        1
-                    }
-                    Short::class.java ->
-                        if(annotation.noCompress){
-                            field.setShort(value, buffer.getShort(offset))
-                            2
-                        }
-                        else {
-                            val rawValue =
-                                    if(annotation.nonNegative) readVarInt(buffer, offset)
-                                    else zigZagDecode(readVarInt(buffer, offset))
-                            field.setShort(value, rawValue.toShort())
-                            varIntSize(rawValue)
-                        }
-                    Int::class.java ->
-                        if(annotation.noCompress){
-                            field.setInt(value, buffer.getInt(offset))
-                            4
-                        }
-                        else {
-                            val rawValue =
-                                    if(annotation.nonNegative) readVarInt(buffer, offset)
-                                    else zigZagDecode(readVarInt(buffer, offset))
-                            field.setInt(value, rawValue.toInt())
-                            varIntSize(rawValue)
-                        }
-                    Long::class.java ->
-                        if(annotation.noCompress){
-                            field.setLong(value, buffer.getLong(offset))
-                            8
-                        }
-                        else {
-                            val rawValue =
-                                    if(annotation.nonNegative) readVarInt(buffer, offset)
-                                    else zigZagDecode(readVarInt(buffer, offset))
-                            field.setLong(value, rawValue)
-                            varIntSize(rawValue)
-                        }
-                    Float::class.java ->
-                        if(annotation.noCompress){
-                            field.setFloat(value, buffer.getFloat(offset))
-                            4
-                        }
-                        else{
-                            val readVal = readVarInt(buffer, offset)
-                            val rawValue =
-                                    if(annotation.floatEndianSwap) intToFloat(swapEndian(readVal.toInt()))
-                                    else intToFloat(readVal.toInt())
-                            field.setFloat(value, rawValue)
-                            varIntSize(readVal)
-                        }
-                    Double::class.java ->
-                        if(annotation.noCompress){
-                            field.setDouble(value, buffer.getDouble(offset))
-                            8
-                        }
-                        else{
-                            val readVal = readVarInt(buffer, offset)
-                            val rawValue =
-                                    if(annotation.floatEndianSwap) longToDouble(swapEndian(readVal))
-                                    else longToDouble(readVal)
-                            field.setDouble(value, rawValue)
-                            varIntSize(readVal)
-                        }
-                    else -> 0
-                }
     }
 }

@@ -1,6 +1,7 @@
 package net.tofvesson.networking
 
 import java.nio.ByteBuffer
+import kotlin.experimental.or
 
 fun varIntSize(value: Long): Int =
         when {
@@ -102,6 +103,15 @@ fun readVarInt(buffer: ByteBuffer, offset: Int): Long {
     while (hdr > ++cmp) res = res.or((buffer[off++].toLong() and 0xFF).shl(cmp.shl(3)))
     return res
 }
+
+fun writeBit(bit: Boolean, buffer: ByteArray, index: Int){
+    buffer[index shr 3] = buffer[index shr 3].or(((if(bit) 1 else 0) shl (index and 7)).toByte())
+}
+fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
+fun writeBit(bit: Boolean, buffer: ByteBuffer, index: Int){
+    buffer.put(index shr 3, buffer[index shr 3] or (((if(bit) 1 else 0) shl (index and 7)).toByte()))
+}
+fun readBit(buffer: ByteBuffer, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
 
 private val converter = ByteBuffer.allocateDirect(8)
 
