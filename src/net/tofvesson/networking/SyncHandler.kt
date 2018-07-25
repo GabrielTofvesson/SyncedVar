@@ -1,22 +1,39 @@
 package net.tofvesson.networking
 
-import java.lang.reflect.Field
 import java.nio.ByteBuffer
 import java.security.NoSuchAlgorithmException
 import java.security.MessageDigest
 
-
 /**
  * @param permissiveMismatchCheck This should essentially never be set to true aside from some *very* odd edge cases
  */
-class SyncHandler(defaultSerializers: Boolean = true, private val permissiveMismatchCheck: Boolean = false) {
+class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private val toSync: ArrayList<Any> = ArrayList()
-    private val serializers: ArrayList<Serializer> = ArrayList()
+    companion object {
+        private val serializers: ArrayList<Serializer> = ArrayList()
 
-    init {
-        if(defaultSerializers) {
+        init {
+            // Standard serializers
             serializers.add(PrimitiveSerializer.singleton)
             serializers.add(PrimitiveArraySerializer.singleton)
+        }
+
+        fun registerSerializer(serializer: Serializer) {
+            if(!serializers.contains(serializer))
+                serializers.add(serializer)
+        }
+
+        fun unregisterSerializer(serializer: Serializer) {
+            serializers.remove(serializer)
+        }
+
+        fun clearSerializers() = serializers.clear()
+        fun getRegisteredSerializers() = serializers.toArray()
+        fun getCompatibleSerializer(type: Class<*>): Serializer {
+            for(serializer in serializers)
+                if(serializer.canSerialize(type))
+                    return serializer
+            throw UnsupportedTypeException("Cannot find a compatible serializer for $type")
         }
     }
 
@@ -26,11 +43,6 @@ class SyncHandler(defaultSerializers: Boolean = true, private val permissiveMism
 
     fun unregisterSyncObject(value: Any){
         toSync.remove(value)
-    }
-
-    fun withSerializer(serializer: Serializer): SyncHandler {
-        if(!serializers.contains(serializer)) serializers.add(serializer)
-        return this
     }
 
     fun serialize(): ByteArray{
@@ -119,12 +131,6 @@ class SyncHandler(defaultSerializers: Boolean = true, private val permissiveMism
             }
         }
         return Pair(byteSize, bitSize)
-    }
-    private fun getCompatibleSerializer(type: Class<*>): Serializer {
-        for(serializer in serializers)
-            if(serializer.canSerialize(type))
-                return serializer
-        throw UnsupportedTypeException("Cannot find a compatible serializer for $type")
     }
 
     private fun readObject(value: Any, buffer: ByteArray, offset: Int, bitOffset: Int) = readType(value.javaClass, value, buffer, offset, bitOffset)

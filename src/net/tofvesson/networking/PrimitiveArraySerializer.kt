@@ -18,11 +18,11 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         val singleton = PrimitiveArraySerializer()
     }
 
-    override fun computeSize(field: Field, flags: Array<out SyncFlag>, owner: Any?): Pair<Int, Int> {
+    override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, fieldType: Class<*>): Pair<Int, Int> {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
         var byteSize = if(flags.contains(knownSize)) 0 else varIntSize(arrayLength.toLong())
         var bitSize = 0
-        when (field.type) {
+        when (fieldType) {
             BooleanArray::class.java -> bitSize = arrayLength
             ByteArray::class.java -> byteSize += arrayLength
             ShortArray::class.java ->
@@ -74,7 +74,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         return Pair(byteSize, bitSize)
     }
 
-    override fun serialize(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int): Pair<Int, Int> {
+    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
         var localByteOffset = offset
         var localBitOffset = bitFieldOffset
@@ -82,7 +82,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             writeVarInt(byteBuffer, offset, arrayLength.toLong())
             localByteOffset += varIntSize(arrayLength.toLong())
         }
-        when (field.type) {
+        when (fieldType) {
             BooleanArray::class.java ->
                 for(value in field.get(owner) as BooleanArray)
                     writeBit(value, byteBuffer, localBitOffset++)
@@ -167,7 +167,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         return Pair(localByteOffset, localBitOffset)
     }
 
-    override fun deserialize(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int): Pair<Int, Int> {
+    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> {
         var localByteOffset = offset
         var localBitOffset = bitFieldOffset
         val localLength = java.lang.reflect.Array.getLength(field.get(owner))
@@ -183,7 +183,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                 if(arrayLength!=localLength) java.lang.reflect.Array.newInstance(field.type.componentType, arrayLength)
                 else field.get(owner)
 
-        when (field.type) {
+        when (fieldType) {
             BooleanArray::class.java -> {
                 val booleanTarget = target as BooleanArray
                 for (index in 0 until arrayLength)
