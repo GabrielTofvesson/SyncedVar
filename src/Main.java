@@ -1,3 +1,5 @@
+import net.tofvesson.math.MathSerializer;
+import net.tofvesson.math.Vector3;
 import net.tofvesson.networking.*;
 
 public class Main {
@@ -25,10 +27,13 @@ public class Main {
     @SyncedVar
     public static DiffTrackedArray<Long> tracker2 = new DiffTrackedArray<>(Long.class, 8, i -> (long)i);
 
+    @SyncedVar({MathSerializer.flagLowCompressionRotation, MathSerializer.flagPassiveCompress})
+    public static Vector3 lookDirection = new Vector3(60, 90, 80);
+
     public static void main(String[] args){
         Main testObject = new Main();
-        SyncHandler.Companion.registerSerializer(DiffTrackedSerializer.Companion.getSingleton());
 
+        SyncHandler.Companion.registerSerializer(MathSerializer.Companion.getSingleton());
         SyncHandler sync = new SyncHandler();
         sync.registerSyncObject(testObject);
         sync.registerSyncObject(Main.class);
@@ -40,9 +45,11 @@ public class Main {
         tracker.setValue(9);
         tracker2.set(3L, 2);
         tracker2.set(5L, 0);
+        lookDirection.setX(355);
+        lookDirection.setZ(0);
 
         // Generate snapshot of values to serialize
-        byte[] ser = sync.serialize();
+        byte[] ser = sync.serialize().array();
 
         System.out.print("Created and serialized snapshot of field values:\n\t"+
                 testObject.syncTest+"\n\t"+
@@ -52,7 +59,8 @@ public class Main {
                 testbool1+"\n\t"+
                 test[0]+"\n\t"+
                 test[1]+"\n\t"+
-                tracker
+                tracker+"\n\t"+
+                lookDirection
         );
         for(Long value : tracker2.getValues())
             System.out.print("\n\t"+value);
@@ -64,13 +72,13 @@ public class Main {
         value = 9.0f;
         testObject.testbool = true;
         testbool1 = false;
-        test = new boolean[3];
         test[0] = false;
         test[1] = true;
-        test[2] = true;
         tracker.setValue(400);
-        tracker2.set(8L, 2);
         tracker2.set(100L, 0);
+        tracker2.set(8L, 2);
+        lookDirection.setX(200);
+        lookDirection.setZ(360);
 
         System.out.print("Set a new state of test values:\n\t"+
                 testObject.syncTest+"\n\t"+
@@ -80,8 +88,8 @@ public class Main {
                 testbool1+"\n\t"+
                 test[0]+"\n\t"+
                 test[1]+"\n\t"+
-                test[2]+"\n\t"+
-                tracker
+                tracker+"\n\t"+
+                lookDirection
         );
         for(Long value : tracker2.getValues())
             System.out.print("\n\t"+value);
@@ -101,7 +109,8 @@ public class Main {
                 testbool1+"\n\t"+
                 test[0]+"\n\t"+
                 test[1]+"\n\t"+
-                tracker);
+                tracker+"\n\t"+
+                lookDirection);
         for(Long value : tracker2.getValues())
             System.out.print("\n\t"+value);
         System.out.println("\n\nSnapshot size: "+ser.length+" bytes");

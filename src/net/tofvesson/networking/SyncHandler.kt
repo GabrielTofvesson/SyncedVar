@@ -1,9 +1,12 @@
 package net.tofvesson.networking
 
+import net.tofvesson.reflect.access
+import java.lang.reflect.Field
 import java.nio.ByteBuffer
 import java.security.NoSuchAlgorithmException
 import java.security.MessageDigest
 
+@Suppress("MemberVisibilityCanBePrivate", "unused")
 /**
  * @param permissiveMismatchCheck This should essentially never be set to true aside from some *very* odd edge cases
  */
@@ -16,6 +19,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
             // Standard serializers
             serializers.add(PrimitiveSerializer.singleton)
             serializers.add(PrimitiveArraySerializer.singleton)
+            serializers.add(DiffTrackedSerializer.singleton)
         }
 
         fun registerSerializer(serializer: Serializer) {
@@ -35,6 +39,21 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
                     return serializer
             throw UnsupportedTypeException("Cannot find a compatible serializer for $type")
         }
+
+
+        private fun collectSyncable(fieldType: Class<*>, collectStatic: Boolean): List<Field>{
+            var type = fieldType
+            val collect = ArrayList<Field>()
+
+            while(type!=Object::class.java && !type.isPrimitive && type.getAnnotation(NoUpwardCascade::class.java)==null){
+                for(field in type.declaredFields)
+                    if(field.getAnnotation(SyncedVar::class.java)!=null && ((collectStatic && field.modifiers and 8 != 0) || (!collectStatic && field.modifiers and 8 == 0)))
+                        collect.add(field)
+                type = type.superclass
+            }
+
+            return collect
+        }
     }
 
     fun registerSyncObject(value: Any){
@@ -45,44 +64,28 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
         toSync.remove(value)
     }
 
-    fun serialize(): ByteArray{
-        var headerSize = 0
-        var totalSize = 0
-        for(entry in toSync){
-            val result = if(entry is Class<*>) computeClassSize(entry) else computeObjectSize(entry)
-            totalSize += result.first
-            headerSize += result.second
-        }
-
-        var headerIndex = 0
-        var dataIndex = (headerSize shr 3) + (if(headerSize and 7 != 0) 1 else 0)
-
-        totalSize += dataIndex
-
-        val buffer = ByteArray(totalSize)
-        for(entry in toSync){
-            val result =
-                    if(entry is Class<*>) readClass(entry, buffer, dataIndex, headerIndex)
-                    else readObject(entry, buffer, dataIndex, headerIndex)
-            dataIndex = result.first
-            headerIndex = result.second
-        }
-        return buffer
+    fun serialize(): ByteBuffer {
+        val writeState = WriteState(0, 0, 0)
+        for(entry in toSync)
+            if(entry is Class<*>) computeClassSize(entry, writeState)
+            else computeObjectSize(entry, writeState)
+        val writeBuffer = WriteBuffer(writeState)
+        for(entry in toSync)
+            if(entry is Class<*>) readClass(entry, writeBuffer)
+            else readObject(entry, writeBuffer)
+        return writeBuffer.buffer
     }
 
-    fun deserialize(syncData: ByteArray){
-        var headerSize = 0
+    fun deserialize(syncData: ByteArray) = deserialize(syncData, 0)
+    fun deserialize(syncData: ByteArray, bitOffset: Int){
+        val writeState = WriteState(0, 0, 0)
         for(entry in toSync)
-            headerSize += (if(entry is Class<*>) computeClassSize(entry) else computeObjectSize(entry)).second
-        var headerIndex = 0
-        var dataIndex = (headerSize shr 3) + (if(headerSize and 7 != 0) 1 else 0)
-        for(entry in toSync){
-            val result =
-                    if(entry is Class<*>) writeClass(entry, syncData, dataIndex, headerIndex)
-                    else writeObject(entry, syncData, dataIndex, headerIndex)
-            dataIndex = result.first
-            headerIndex = result.second
-        }
+            if(entry is Class<*>) computeClassSize(entry, writeState)
+            else computeObjectSize(entry, writeState)
+        val readBuffer = ReadBuffer(writeState, ByteBuffer.wrap(syncData), bitOffset)
+        for(entry in toSync)
+            if(entry is Class<*>) writeClass(entry, readBuffer)
+            else writeObject(entry, readBuffer)
     }
 
     fun generateMismatchCheck(): ByteArray {
@@ -115,57 +118,27 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     }
 
 
-    private fun computeObjectSize(value: Any) = computeTypeSize(value.javaClass, value)
-    private fun computeClassSize(value: Class<*>) = computeTypeSize(value, null)
-    private fun computeTypeSize(type: Class<*>, value: Any?): Pair<Int, Int> {
-        var byteSize = 0
-        var bitSize = 0
-        for(field in type.declaredFields){
-            if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
-            val annotation = field.getAnnotation(SyncedVar::class.java)
-            field.trySetAccessible()
-            if(annotation!=null){
-                val result = getCompatibleSerializer(field.type).computeSize(field, SyncFlag.parse(annotation.value), value)
-                byteSize += result.first
-                bitSize += result.second
-            }
-        }
-        return Pair(byteSize, bitSize)
+    private fun computeObjectSize(value: Any, writeState: WriteState) = computeTypeSize(value.javaClass, value, writeState)
+    private fun computeClassSize(value: Class<*>, writeState: WriteState) = computeTypeSize(value, null, writeState)
+    private fun computeTypeSize(type: Class<*>, value: Any?, writeState: WriteState) {
+        for(field in collectSyncable(type, value==null))
+            getCompatibleSerializer(field.access().type)
+                    .computeSize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeState)
     }
 
-    private fun readObject(value: Any, buffer: ByteArray, offset: Int, bitOffset: Int) = readType(value.javaClass, value, buffer, offset, bitOffset)
-    private fun readClass(value: Class<*>, buffer: ByteArray, offset: Int, bitOffset: Int) = readType(value, null, buffer, offset, bitOffset)
-    private fun readType(type: Class<*>, value: Any?, buffer: ByteArray, offset: Int, bitOffset: Int): Pair<Int, Int> {
-        val byteBuffer = ByteBuffer.wrap(buffer)
-        var localOffset = offset
-        var localBitOffset = bitOffset
-        for(field in type.declaredFields){
-            if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
-            val annotation = field.getAnnotation(SyncedVar::class.java)
-            if(annotation != null){
-                val result = getCompatibleSerializer(field.type).serialize(field, SyncFlag.parse(annotation.value), value, byteBuffer, localOffset, localBitOffset)
-                localOffset = result.first
-                localBitOffset = result.second
-            }
-        }
-        return Pair(localOffset, localBitOffset)
+    private fun readObject(value: Any, writeBuffer: WriteBuffer) = readType(value.javaClass, value, writeBuffer)
+    private fun readClass(value: Class<*>, writeBuffer: WriteBuffer) = readType(value, null, writeBuffer)
+    private fun readType(type: Class<*>, value: Any?, writeBuffer: WriteBuffer) {
+        for(field in collectSyncable(type, value==null))
+            getCompatibleSerializer(field.type)
+                    .serialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeBuffer)
     }
 
-    private fun writeObject(value: Any, buffer: ByteArray, offset: Int, bitOffset: Int) = writeType(value.javaClass, value, buffer, offset, bitOffset)
-    private fun writeClass(value: Class<*>, buffer: ByteArray, offset: Int, bitOffset: Int) = writeType(value, null, buffer, offset, bitOffset)
-    private fun writeType(type: Class<*>, value: Any?, buffer: ByteArray, offset: Int, bitOffset: Int): Pair<Int, Int> {
-        val byteBuffer = ByteBuffer.wrap(buffer)
-        var localOffset = offset
-        var localBitOffset = bitOffset
-        for(field in type.declaredFields){
-            if((value == null && field.modifiers and 8 == 0) || (value != null && field.modifiers and 8 != 0)) continue
-            val annotation = field.getAnnotation(SyncedVar::class.java)
-            if(annotation != null){
-                val result = getCompatibleSerializer(field.type).deserialize(field, SyncFlag.parse(annotation.value), value, byteBuffer, localOffset, localBitOffset)
-                localOffset = result.first
-                localBitOffset = result.second
-            }
-        }
-        return Pair(localOffset, localBitOffset)
+    private fun writeObject(value: Any, readBuffer: ReadBuffer) = writeType(value.javaClass, value, readBuffer)
+    private fun writeClass(value: Class<*>, readBuffer: ReadBuffer) = writeType(value, null, readBuffer)
+    private fun writeType(type: Class<*>, value: Any?, readBuffer: ReadBuffer) {
+        for(field in collectSyncable(type, value==null))
+            getCompatibleSerializer(field.type)
+                    .deserialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, readBuffer)
     }
 }

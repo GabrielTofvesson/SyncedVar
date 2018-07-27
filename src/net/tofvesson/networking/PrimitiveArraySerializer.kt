@@ -1,8 +1,8 @@
 package net.tofvesson.networking
 
 import java.lang.reflect.Field
-import java.nio.ByteBuffer
 
+@Suppress("MemberVisibilityCanBePrivate")
 class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         BooleanArray::class.java,
         ByteArray::class.java,
@@ -18,166 +18,136 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         val singleton = PrimitiveArraySerializer()
     }
 
-    override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, fieldType: Class<*>): Pair<Int, Int> {
+    override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, state: WriteState, fieldType: Class<*>) {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
-        var byteSize = if(flags.contains(knownSize)) 0 else varIntSize(arrayLength.toLong())
-        var bitSize = 0
+        val holder = Holder(null)
         when (fieldType) {
-            BooleanArray::class.java -> bitSize = arrayLength
-            ByteArray::class.java -> byteSize += arrayLength
+            BooleanArray::class.java -> state.registerBits(arrayLength)
+            ByteArray::class.java -> state.registerBytes(arrayLength)
             ShortArray::class.java ->
-                if(flags.contains(SyncFlag.NoCompress)) byteSize += arrayLength * 2
-                else
-                    for(value in field.get(owner) as ShortArray)
-                        byteSize +=
-                                varIntSize(
-                                        if(flags.contains(SyncFlag.NonNegative)) value.toLong()
-                                        else zigZagEncode(value.toLong())
-                                )
+                if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 2)
+                else {
+                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java)
+                    for (value in field.get(owner) as ShortArray) {
+                        holder.value = value
+                        shortSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Short::class.java)
+                    }
+                }
             IntArray::class.java ->
-                if(flags.contains(SyncFlag.NoCompress)) byteSize += arrayLength * 4
-                else
-                    for(value in field.get(owner) as IntArray)
-                        byteSize +=
-                                varIntSize(
-                                        if(flags.contains(SyncFlag.NonNegative)) value.toLong()
-                                        else zigZagEncode(value.toLong())
-                                )
+                if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 4)
+                else {
+                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
+                    for (value in field.get(owner) as IntArray) {
+                        holder.value = value
+                        intSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Int::class.java)
+                    }
+                }
             LongArray::class.java ->
-                if(flags.contains(SyncFlag.NoCompress)) byteSize += arrayLength * 8
-                else
-                    for(value in field.get(owner) as LongArray)
-                        byteSize +=
-                                varIntSize(
-                                        if(flags.contains(SyncFlag.NonNegative)) value
-                                        else zigZagEncode(value)
-                                )
+                if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 8)
+                else {
+                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java)
+                    for (value in field.get(owner) as LongArray) {
+                        holder.value = value
+                        longSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Long::class.java)
+                    }
+                }
             FloatArray::class.java ->
-                if(flags.contains(SyncFlag.NoCompress)) byteSize += arrayLength * 4
-                else
-                    for (value in field.get(owner) as LongArray)
-                        byteSize +=
-                                varIntSize(
-                                        if(flags.contains(SyncFlag.FloatEndianSwap)) bitConvert(swapEndian(floatToInt(field.getFloat(owner))))
-                                        else bitConvert(floatToInt(field.getFloat(owner)))
-                                )
+                if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 4)
+                else {
+                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
+                    for (value in field.get(owner) as FloatArray) {
+                        holder.value = value
+                        floatSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Float::class.java)
+                    }
+                }
             DoubleArray::class.java ->
-                if(flags.contains(SyncFlag.NoCompress)) byteSize += arrayLength * 8
-                else
-                    for (value in field.get(owner) as LongArray)
-                        byteSize +=
-                                varIntSize(
-                                        if(flags.contains(SyncFlag.FloatEndianSwap)) swapEndian(doubleToLong(field.getDouble(owner)))
-                                        else doubleToLong(field.getDouble(owner))
-                                )
+                if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 8)
+                else {
+                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java)
+                    for (value in field.get(owner) as DoubleArray) {
+                        holder.value = value
+                        doubleSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Double::class.java)
+                    }
+                }
+            else -> throwInvalidType(fieldType)
         }
-        return Pair(byteSize, bitSize)
     }
 
-    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> {
+    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WriteBuffer, fieldType: Class<*>) {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
-        var localByteOffset = offset
-        var localBitOffset = bitFieldOffset
-        if(!flags.contains(knownSize)){
-            writeVarInt(byteBuffer, offset, arrayLength.toLong())
-            localByteOffset += varIntSize(arrayLength.toLong())
-        }
+        val holder = Holder(null)
+        if(!flags.contains(knownSize)) writeBuffer.writePackedInt(arrayLength, true)
         when (fieldType) {
             BooleanArray::class.java ->
                 for(value in field.get(owner) as BooleanArray)
-                    writeBit(value, byteBuffer, localBitOffset++)
+                    writeBuffer.writeBit(value)
             ByteArray::class.java ->
                 for(value in field.get(owner) as ByteArray)
-                    byteBuffer.put(localByteOffset++, value)
+                    writeBuffer.writeByte(value)
             ShortArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress))
-                    for(value in field.get(owner) as ShortArray){
-                        byteBuffer.putShort(localByteOffset, value)
-                        localByteOffset += 2
+                    for(value in field.get(owner) as ShortArray)
+                        writeBuffer.writeShort(value)
+                else {
+                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java)
+                    for (value in field.get(owner) as ShortArray) {
+                        holder.value = value
+                        shortSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
                     }
-                else
-                    for(value in field.get(owner) as ShortArray) {
-                        val rawVal =
-                                if(flags.contains(SyncFlag.NonNegative)) value.toLong()
-                                else zigZagEncode(value.toLong())
-                        writeVarInt(byteBuffer, localByteOffset, rawVal)
-                        localByteOffset += varIntSize(rawVal)
-                    }
+                }
             IntArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress))
-                    for(value in field.get(owner) as IntArray){
-                        byteBuffer.putInt(localByteOffset, value)
-                        localByteOffset += 4
+                    for(value in field.get(owner) as IntArray)
+                        writeBuffer.writeInt(value)
+                else {
+                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
+                    for (value in field.get(owner) as IntArray) {
+                        holder.value = value
+                        intSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
                     }
-                else
-                    for(value in field.get(owner) as IntArray) {
-                        val rawVal =
-                                if(flags.contains(SyncFlag.NonNegative)) value.toLong()
-                                else zigZagEncode(value.toLong())
-                        writeVarInt(byteBuffer, localByteOffset, rawVal)
-                        localByteOffset += varIntSize(rawVal)
-                    }
+                }
             LongArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress))
-                    for(value in field.get(owner) as LongArray){
-                        byteBuffer.putLong(localByteOffset, value)
-                        localByteOffset += 8
+                    for(value in field.get(owner) as LongArray)
+                        writeBuffer.writeLong(value)
+                else {
+                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java)
+                    for (value in field.get(owner) as LongArray) {
+                        holder.value = value
+                        longSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
                     }
-                else
-                    for(value in field.get(owner) as LongArray) {
-                        val rawVal =
-                                if(flags.contains(SyncFlag.NonNegative)) value
-                                else zigZagEncode(value)
-                        writeVarInt(
-                                byteBuffer,
-                                localByteOffset,
-                                rawVal
-                                )
-                        localByteOffset += varIntSize(rawVal)
-                    }
+                }
             FloatArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress))
-                    for(value in field.get(owner) as FloatArray){
-                        byteBuffer.putFloat(localByteOffset, value)
-                        localByteOffset += 4
-                    }
-                else
+                    for(value in field.get(owner) as FloatArray)
+                        writeBuffer.writeFloat(value)
+                else {
+                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
                     for (value in field.get(owner) as FloatArray) {
-                        val rawVal =
-                                if(flags.contains(SyncFlag.FloatEndianSwap)) bitConvert(swapEndian(floatToInt(field.getFloat(owner))))
-                                else bitConvert(floatToInt(field.getFloat(owner)))
-                        writeVarInt(byteBuffer, localByteOffset, rawVal)
-                        localByteOffset += varIntSize(rawVal)
+                        holder.value = value
+                        floatSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
                     }
+                }
             DoubleArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress))
-                    for(value in field.get(owner) as DoubleArray){
-                        byteBuffer.putDouble(localByteOffset, value)
-                        localByteOffset += 8
+                    for(value in field.get(owner) as DoubleArray)
+                        writeBuffer.writeDouble(value)
+                else {
+                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java)
+                    for (value in field.get(owner) as DoubleArray) {
+                        holder.value = value
+                        doubleSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
                     }
-                else
-                    for (value in field.get(owner) as DoubleArray){
-                        val rawVal =
-                                if(flags.contains(SyncFlag.FloatEndianSwap)) swapEndian(doubleToLong(field.getDouble(owner)))
-                                else doubleToLong(field.getDouble(owner))
-                        writeVarInt(byteBuffer, localByteOffset, rawVal)
-                        localByteOffset += varIntSize(rawVal)
-                    }
+                }
+            else -> throwInvalidType(fieldType)
         }
-        return Pair(localByteOffset, localBitOffset)
     }
 
-    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> {
-        var localByteOffset = offset
-        var localBitOffset = bitFieldOffset
+    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: ReadBuffer, fieldType: Class<*>) {
         val localLength = java.lang.reflect.Array.getLength(field.get(owner))
         val arrayLength =
                 if(flags.contains(knownSize)) localLength
-                else{
-                    val v = readVarInt(byteBuffer, offset)
-                    localByteOffset += varIntSize(v)
-                    v.toInt()
-                }
+                else readBuffer.readPackedInt(true)
 
         val target =
                 if(arrayLength!=localLength) java.lang.reflect.Array.newInstance(field.type.componentType, arrayLength)
@@ -187,97 +157,60 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             BooleanArray::class.java -> {
                 val booleanTarget = target as BooleanArray
                 for (index in 0 until arrayLength)
-                    booleanTarget[index] = readBit(byteBuffer, localBitOffset++)
+                    booleanTarget[index] = readBuffer.readBit()
             }
             ByteArray::class.java -> {
                 val byteTarget = target as ByteArray
                 for (index in 0 until arrayLength)
-                    byteTarget[index] = byteBuffer[localByteOffset++]
+                    byteTarget[index] = readBuffer.readByte()
             }
             ShortArray::class.java -> {
                 val shortTarget = target as ShortArray
                 if (flags.contains(SyncFlag.NoCompress))
-                    for (index in 0 until arrayLength) {
-                        shortTarget[index] = byteBuffer.getShort(localByteOffset)
-                        localByteOffset += 2
-                    }
+                    for (index in 0 until arrayLength)
+                        shortTarget[index] = readBuffer.readShort()
                 else
-                    for (index in 0 until arrayLength) {
-                        val rawValue =
-                                if(flags.contains(SyncFlag.NonNegative)) readVarInt(byteBuffer, offset)
-                                else zigZagDecode(readVarInt(byteBuffer, offset))
-                        shortTarget[index] = rawValue.toShort()
-                        localByteOffset += varIntSize(rawValue)
-                    }
+                    for (index in 0 until arrayLength)
+                        shortTarget[index] = readBuffer.readPackedShort(flags.contains(SyncFlag.NonNegative))
             }
             IntArray::class.java -> {
                 val intTarget = target as IntArray
                 if (flags.contains(SyncFlag.NoCompress))
-                    for (index in 0 until arrayLength) {
-                        intTarget[index] = byteBuffer.getInt(localByteOffset)
-                        localByteOffset += 4
-                    }
+                    for (index in 0 until arrayLength)
+                        intTarget[index] = readBuffer.readInt()
                 else
-                    for (index in 0 until arrayLength) {
-                        val rawValue =
-                                if(flags.contains(SyncFlag.NonNegative)) readVarInt(byteBuffer, offset)
-                                else zigZagDecode(readVarInt(byteBuffer, offset))
-                        intTarget[index] = rawValue.toInt()
-                        localByteOffset += varIntSize(rawValue)
-                    }
+                    for (index in 0 until arrayLength)
+                        intTarget[index] = readBuffer.readPackedInt(flags.contains(SyncFlag.NonNegative))
             }
             LongArray::class.java -> {
                 val longTarget = target as LongArray
                 if (flags.contains(SyncFlag.NoCompress))
-                    for (index in 0 until arrayLength) {
-                        longTarget[index] = byteBuffer.getLong(localByteOffset)
-                        localByteOffset += 8
-                    }
+                    for (index in 0 until arrayLength)
+                        longTarget[index] = readBuffer.readLong()
                 else
-                    for (index in 0 until arrayLength) {
-                        val rawValue =
-                                if(flags.contains(SyncFlag.NonNegative)) readVarInt(byteBuffer, offset)
-                                else zigZagDecode(readVarInt(byteBuffer, offset))
-                        longTarget[index] = rawValue
-                        localByteOffset += varIntSize(rawValue)
-                    }
+                    for (index in 0 until arrayLength)
+                        longTarget[index] = readBuffer.readPackedLong(flags.contains(SyncFlag.NonNegative))
             }
             FloatArray::class.java -> {
                 val floatTarget = target as FloatArray
                 if (flags.contains(SyncFlag.NoCompress))
-                    for (index in 0 until arrayLength) {
-                        floatTarget[index] = byteBuffer.getFloat(localByteOffset)
-                        localByteOffset += 4
-                    }
+                    for (index in 0 until arrayLength)
+                        floatTarget[index] = readBuffer.readFloat()
                 else
-                    for (index in 0 until arrayLength) {
-                        val readVal = readVarInt(byteBuffer, offset)
-                        val rawValue =
-                                if(flags.contains(SyncFlag.FloatEndianSwap)) intToFloat(swapEndian(readVal.toInt()))
-                                else intToFloat(readVal.toInt())
-                        floatTarget[index] = rawValue
-                        localBitOffset += varIntSize(readVal)
-                    }
+                    for (index in 0 until arrayLength)
+                        floatTarget[index] = readBuffer.readPackedFloat(flags.contains(SyncFlag.NonNegative))
             }
             DoubleArray::class.java -> {
                 val doubleTarget = target as DoubleArray
                 if (flags.contains(SyncFlag.NoCompress))
-                    for (index in 0 until arrayLength) {
-                        doubleTarget[index] = byteBuffer.getDouble(localByteOffset)
-                        localByteOffset += 8
-                    }
+                    for (index in 0 until arrayLength)
+                        doubleTarget[index] = readBuffer.readDouble()
                 else
-                    for (index in 0 until arrayLength) {
-                        val readVal = readVarInt(byteBuffer, offset)
-                        val rawValue =
-                                if(flags.contains(SyncFlag.FloatEndianSwap)) longToDouble(swapEndian(readVal))
-                                else longToDouble(readVal)
-                        doubleTarget[index] = rawValue
-                        localBitOffset += varIntSize(readVal)
-                    }
+                    for (index in 0 until arrayLength)
+                        doubleTarget[index] = readBuffer.readPackedDouble(flags.contains(SyncFlag.NonNegative))
             }
+            else -> throwInvalidType(fieldType)
         }
         if(arrayLength!=localLength) field.set(owner, target)
-        return Pair(localByteOffset, localBitOffset)
     }
 }

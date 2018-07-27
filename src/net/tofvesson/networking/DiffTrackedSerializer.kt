@@ -1,7 +1,6 @@
 package net.tofvesson.networking
 
 import java.lang.reflect.Field
-import java.nio.ByteBuffer
 
 class DiffTrackedSerializer private constructor(): Serializer(arrayOf(
         DiffTracked::class.java,
@@ -9,121 +8,95 @@ class DiffTrackedSerializer private constructor(): Serializer(arrayOf(
 )) {
     companion object {
         private val trackedField = DiffTracked::class.java.getDeclaredField("_value")
-        private val holderValue = Holder::class.java.getDeclaredField("value")
         val singleton = DiffTrackedSerializer()
     }
-    override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, fieldType: Class<*>): Pair<Int, Int> =
-            when(fieldType) {
-                DiffTracked::class.java -> {
-                    val tracker = field.get(owner) as DiffTracked<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
-                    if(tracker.hasChanged()){
-                        val result = serializer.computeSizeExplicit(trackedField, flags, tracker, tracker.valueType)
-                        Pair(result.first, result.second+1)
-                    }else Pair(0, 1)
-                }
-                DiffTrackedArray::class.java -> {
-                    val tracker = field.get(owner) as DiffTrackedArray<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
-                    if(tracker.hasChanged()){
-                        var bits = 0
-                        var bytes = 0
-                        val holder = Holder(null)
-
-                        for(index in tracker.changeMap.indices)
-                            if(tracker.changeMap[index]){
-                                holder.value = tracker[index]
-                                val result = serializer.computeSizeExplicit(holderValue, flags, holder, tracker.elementType)
-                                bytes += result.first
-                                bits += result.second
-                            }
-                        Pair(bytes, bits+tracker.size)
-                    }else Pair(0, tracker.size)
-                }
-                else -> Pair(0, 0)
+    override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, state: WriteState, fieldType: Class<*>) {
+        when (fieldType) {
+            DiffTracked::class.java -> {
+                val tracker = field.get(owner) as DiffTracked<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
+                state.registerHeader(1)
+                if (tracker.hasChanged())
+                    serializer.computeSizeExplicit(trackedField, flags, tracker, state, tracker.valueType)
             }
-
-    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> =
-            when(fieldType) {
-                DiffTracked::class.java -> {
-                    val tracker = field.get(owner) as DiffTracked<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
-                    writeBit(tracker.hasChanged(), byteBuffer, bitFieldOffset)
-                    if(tracker.hasChanged()){
-                        val result = serializer.serializeExplicit(trackedField, flags, tracker, byteBuffer, offset, bitFieldOffset+1, tracker.valueType)
-                        tracker.clearChangeState()
-                        Pair(result.first, result.second)
-                    }else{
-                        tracker.clearChangeState()
-                        Pair(offset, bitFieldOffset+1)
-                    }
-                }
-                DiffTrackedArray::class.java -> {
-                    val tracker = field.get(owner) as DiffTrackedArray<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
-                    if(tracker.hasChanged()){
-                        var bits = bitFieldOffset
-                        var bytes = offset
-                        val holder = Holder(null)
-
-                        for(index in tracker.changeMap.indices) {
-                            writeBit(tracker.changeMap[index], byteBuffer, bits++)
-                            if (tracker.changeMap[index]) {
-                                holder.value = tracker[index]
-                                val result = serializer.serializeExplicit(holderValue, flags, holder, byteBuffer, bytes, bits, tracker.elementType)
-                                bytes = result.first
-                                bits = result.second
-                            }
+            DiffTrackedArray::class.java -> {
+                val tracker = field.get(owner) as DiffTrackedArray<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
+                state.registerHeader(1)
+                if (tracker.hasChanged()) {
+                    val holder = Holder(null)
+                    state.registerHeader(tracker.size)
+                    for (index in tracker.changeMap.indices)
+                        if (tracker.changeMap[index]) {
+                            holder.value = tracker[index]
+                            serializer.computeSizeExplicit(Holder.valueField, flags, holder, state, tracker.elementType)
                         }
-                        tracker.clearChangeState()
-                        Pair(bytes, bits)
-                    }else{
-                        tracker.clearChangeState()
-                        Pair(offset, bitFieldOffset+tracker.size)
-                    }
                 }
-                else -> Pair(0, 0)
             }
+            else -> throwInvalidType(fieldType)
+        }
+    }
 
-    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, byteBuffer: ByteBuffer, offset: Int, bitFieldOffset: Int, fieldType: Class<*>): Pair<Int, Int> =
-            when(fieldType) {
-                DiffTracked::class.java -> {
-                    val tracker = field.get(owner) as DiffTracked<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
-                    var bytes = offset
-                    var bits = bitFieldOffset
-                    if(readBit(byteBuffer, bits++)){
-                        val result = serializer.deserializeExplicit(trackedField, flags, tracker, byteBuffer, bytes, bits, tracker.valueType)
-                        bytes = result.first
-                        bits = result.second
+    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WriteBuffer, fieldType: Class<*>) {
+        when (fieldType) {
+            DiffTracked::class.java -> {
+                val tracker = field.get(owner) as DiffTracked<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
+                writeBuffer.writeHeader(tracker.hasChanged())
+                if (tracker.hasChanged()) {
+                    serializer.serializeExplicit(trackedField, flags, tracker, writeBuffer, tracker.valueType)
+                    tracker.clearChangeState()
+                }
+            }
+            DiffTrackedArray::class.java -> {
+                val tracker = field.get(owner) as DiffTrackedArray<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
+                writeBuffer.writeHeader(tracker.hasChanged())
+                if (tracker.hasChanged()) {
+                    val holder = Holder(null)
+
+                    for (index in tracker.changeMap.indices) {
+                        writeBuffer.writeHeader(tracker.changeMap[index])
+                        if (tracker.changeMap[index]) {
+                            holder.value = tracker[index]
+                            serializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, tracker.elementType)
+                        }
                     }
                     tracker.clearChangeState()
-                    Pair(bytes, bits)
                 }
-                DiffTrackedArray::class.java -> {
-                    val tracker = field.get(owner) as DiffTrackedArray<*>
-                    val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
+            }
+            else -> throwInvalidType(fieldType)
+        }
+    }
 
-                    var bits = bitFieldOffset
-                    var bytes = offset
+    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: ReadBuffer, fieldType: Class<*>) {
+        when (fieldType) {
+            DiffTracked::class.java -> {
+                val tracker = field.get(owner) as DiffTracked<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.valueType)
+                if (readBuffer.readHeader())
+                    serializer.deserializeExplicit(trackedField, flags, tracker, readBuffer, tracker.valueType)
+                tracker.clearChangeState()
+            }
+            DiffTrackedArray::class.java -> {
+                val tracker = field.get(owner) as DiffTrackedArray<*>
+                val serializer = SyncHandler.getCompatibleSerializer(tracker.elementType)
+
+                if(readBuffer.readHeader()) {
                     val holder = Holder(null)
 
                     val array = tracker.values as Array<Any?>
 
-                    for(index in tracker.changeMap.indices){
-                        if(readBit(byteBuffer, bits++)){
-                            holder.value = tracker[index]
-                            val result = serializer.deserializeExplicit(holderValue, flags, holder, byteBuffer, bytes, bits, tracker.elementType)
-                            bytes = result.first
-                            bits = result.second
+                    for (index in tracker.changeMap.indices) {
+                        if (readBuffer.readHeader()) {
+                            serializer.deserializeExplicit(Holder.valueField, flags, holder, readBuffer, tracker.elementType)
                             array[index] = holder.value
                         }
                     }
-                    tracker.clearChangeState()
-                    Pair(bytes, bits)
                 }
-                else -> Pair(0, 0)
+                tracker.clearChangeState()
             }
-
-    private data class Holder(var value: Any?)
+            else -> throwInvalidType(fieldType)
+        }
+    }
 }

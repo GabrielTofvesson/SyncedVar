@@ -2,6 +2,7 @@ package net.tofvesson.networking
 
 import java.nio.ByteBuffer
 import kotlin.experimental.or
+import kotlin.math.roundToInt
 
 fun varIntSize(value: Long): Int =
         when {
@@ -159,3 +160,28 @@ fun bitConvert(value: Int): Long = value.toLong() and 0xFFFFFFFFL
 
 fun zigZagEncode(value: Long): Long = (value shl 1) xor (value shr 63)
 fun zigZagDecode(value: Long): Long = (value shr 1) xor ((value shl 63) shr 63)
+
+fun Float.encodeRotation(byteCount: Int): Int {
+    if(this < 0 || this > 360) throw RotationOutOfBoundsException()
+    if(byteCount<0) throw IllegalArgumentException("Cannot encode rotation with a negative amount of bytes")
+    if(byteCount>4) throw IllegalArgumentException("Cannot encode rotation with more bytes than in the original value")
+    if(byteCount==4) return this.roundToInt()
+    return ((this/360f)*(-1 ushr (8*(4-byteCount)))).roundToInt()
+}
+
+fun Int.decodeRotation(byteCount: Int): Float {
+    if(byteCount<0) throw IllegalArgumentException("Cannot decode rotation with a negative amount of bytes")
+    if(byteCount>4) throw IllegalArgumentException("Cannot decode rotation with more bytes than in the original value")
+    if(byteCount==4) return this.toFloat()
+    val mask = (-1 ushr (8*(4-byteCount)))
+    if(this < 0 || this > mask) throw RotationOutOfBoundsException()
+    return (this/mask.toFloat())*360f
+}
+
+class RotationOutOfBoundsException: RuntimeException {
+    constructor() : super()
+    constructor(message: String?) : super(message)
+    constructor(message: String?, cause: Throwable?) : super(message, cause)
+    constructor(cause: Throwable?) : super(cause)
+    constructor(message: String?, cause: Throwable?, enableSuppression: Boolean, writableStackTrace: Boolean) : super(message, cause, enableSuppression, writableStackTrace)
+}
