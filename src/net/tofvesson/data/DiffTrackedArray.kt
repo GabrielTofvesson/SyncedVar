@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
 class DiffTrackedArray<T>(val elementType: Class<T>, val size: Int, gen: (Int) -> T) {
 

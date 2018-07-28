@@ -1,6 +1,9 @@
-package net.tofvesson.math
+package net.tofvesson.serializers
 
-import net.tofvesson.networking.*
+import net.tofvesson.annotation.SyncFlag
+import net.tofvesson.data.*
+import net.tofvesson.exception.MismatchedFlagException
+import net.tofvesson.math.*
 import net.tofvesson.reflect.access
 import java.lang.reflect.Field
 
@@ -102,13 +105,13 @@ class MathSerializer: Serializer(arrayOf(
                         if(nn || pc){
                             var track = 0
                             flags = Array(flags.size - resize){
-                                if(flags[track]==SyncFlag.NonNegative && nn){
-                                    if(flags[++track]==SyncFlag.NoCompress && pc)
+                                if(flags[track]== SyncFlag.NonNegative && nn){
+                                    if(flags[++track]== SyncFlag.NoCompress && pc)
                                     flags[++track]
                                     else flags[track]
                                 }
-                                else if(flags[track]==SyncFlag.NoCompress && nn){
-                                    if(flags[++track]==SyncFlag.NonNegative && pc)
+                                else if(flags[track]== SyncFlag.NoCompress && nn){
+                                    if(flags[++track]== SyncFlag.NonNegative && pc)
                                         flags[++track]
                                     else flags[track]
                                 }else flags[track]

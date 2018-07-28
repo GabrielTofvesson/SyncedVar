@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
 import net.tofvesson.math.collapseLowerByte
 
@@ -10,9 +10,9 @@ data class WriteState(private var _bytes: Int, private var _bits: Int, private v
     var header: Int = _header
         private set
 
-    fun registerBytes(bytes: Int): WriteState  { this.bytes  += bytes;  return this }
-    fun registerBits(bits: Int) : WriteState   { this.bits   += bits;   return this }
-    fun registerHeader(header: Int): WriteState{ this.header += header; return this }
+    fun registerBytes(bytes: Int): WriteState { this.bytes  += bytes;  return this }
+    fun registerBits(bits: Int) : WriteState { this.bits   += bits;   return this }
+    fun registerHeader(header: Int): WriteState { this.header += header; return this }
 
     fun computeRequiredBytes(additionalBytes: Int = 0, additionalBits: Int = 0) =
             bytes + additionalBytes + computeBitFieldOffset(additionalBits)

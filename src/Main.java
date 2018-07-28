@@ -1,6 +1,9 @@
-import net.tofvesson.math.MathSerializer;
+import net.tofvesson.annotation.SyncedVar;
+import net.tofvesson.data.DiffTracked;
+import net.tofvesson.data.DiffTrackedArray;
+import net.tofvesson.data.SyncHandler;
+import net.tofvesson.serializers.MathSerializer;
 import net.tofvesson.math.Vector3;
-import net.tofvesson.networking.*;
 
 public class Main {
     @SyncedVar("NonNegative")
@@ -33,7 +36,6 @@ public class Main {
     public static void main(String[] args){
         Main testObject = new Main();
 
-        SyncHandler.Companion.registerSerializer(MathSerializer.Companion.getSingleton());
         SyncHandler sync = new SyncHandler();
         sync.registerSyncObject(testObject);
         sync.registerSyncObject(Main.class);

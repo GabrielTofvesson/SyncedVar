@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
 import java.util.*
 

@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.annotation
 
 /**
  * Prevents SyncedVar system from syncing superclasses

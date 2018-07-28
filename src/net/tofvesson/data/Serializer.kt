@@ -1,5 +1,7 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
+import net.tofvesson.annotation.SyncFlag
+import net.tofvesson.exception.UnsupportedTypeException
 import java.lang.reflect.Field
 import java.util.*
 

@@ -1,6 +1,6 @@
 package net.tofvesson.math
 
-import net.tofvesson.networking.DiffTracked
+import net.tofvesson.data.DiffTracked
 
 class Vector3(xPos: Float, yPos: Float, zPos: Float) {
 

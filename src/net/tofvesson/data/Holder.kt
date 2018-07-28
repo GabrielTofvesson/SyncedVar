@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
 data class Holder(var value: Any?){
     companion object {

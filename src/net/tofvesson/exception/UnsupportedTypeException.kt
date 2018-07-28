@@ -1,6 +1,6 @@
-package net.tofvesson.networking
+package net.tofvesson.exception
 
-class InsufficientCapacityException: RuntimeException {
+class UnsupportedTypeException: RuntimeException {
     constructor() : super()
     constructor(message: String?) : super(message)
     constructor(message: String?, cause: Throwable?) : super(message, cause)

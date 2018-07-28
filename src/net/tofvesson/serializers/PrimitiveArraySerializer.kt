@@ -1,5 +1,7 @@
-package net.tofvesson.networking
+package net.tofvesson.serializers
 
+import net.tofvesson.annotation.SyncFlag
+import net.tofvesson.data.*
 import java.lang.reflect.Field
 
 @Suppress("MemberVisibilityCanBePrivate")

@@ -1,6 +1,14 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
+import net.tofvesson.annotation.NoUpwardCascade
+import net.tofvesson.annotation.SyncFlag
+import net.tofvesson.annotation.SyncedVar
+import net.tofvesson.exception.UnsupportedTypeException
 import net.tofvesson.reflect.access
+import net.tofvesson.serializers.DiffTrackedSerializer
+import net.tofvesson.serializers.MathSerializer
+import net.tofvesson.serializers.PrimitiveArraySerializer
+import net.tofvesson.serializers.PrimitiveSerializer
 import java.lang.reflect.Field
 import java.nio.ByteBuffer
 import java.security.NoSuchAlgorithmException
@@ -20,6 +28,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
             serializers.add(PrimitiveSerializer.singleton)
             serializers.add(PrimitiveArraySerializer.singleton)
             serializers.add(DiffTrackedSerializer.singleton)
+            serializers.add(MathSerializer.singleton)
         }
 
         fun registerSerializer(serializer: Serializer) {
@@ -121,7 +130,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private fun computeObjectSize(value: Any, writeState: WriteState) = computeTypeSize(value.javaClass, value, writeState)
     private fun computeClassSize(value: Class<*>, writeState: WriteState) = computeTypeSize(value, null, writeState)
     private fun computeTypeSize(type: Class<*>, value: Any?, writeState: WriteState) {
-        for(field in collectSyncable(type, value==null))
+        for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.access().type)
                     .computeSize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeState)
     }
@@ -129,7 +138,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private fun readObject(value: Any, writeBuffer: WriteBuffer) = readType(value.javaClass, value, writeBuffer)
     private fun readClass(value: Class<*>, writeBuffer: WriteBuffer) = readType(value, null, writeBuffer)
     private fun readType(type: Class<*>, value: Any?, writeBuffer: WriteBuffer) {
-        for(field in collectSyncable(type, value==null))
+        for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.type)
                     .serialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeBuffer)
     }
@@ -137,7 +146,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private fun writeObject(value: Any, readBuffer: ReadBuffer) = writeType(value.javaClass, value, readBuffer)
     private fun writeClass(value: Class<*>, readBuffer: ReadBuffer) = writeType(value, null, readBuffer)
     private fun writeType(type: Class<*>, value: Any?, readBuffer: ReadBuffer) {
-        for(field in collectSyncable(type, value==null))
+        for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.type)
                     .deserialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, readBuffer)
     }

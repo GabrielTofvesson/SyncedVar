@@ -1,6 +1,7 @@
-package net.tofvesson.networking
+package net.tofvesson.data
 
-import net.tofvesson.math.collapseLowerByte
+import net.tofvesson.exception.InsufficientCapacityException
+import net.tofvesson.math.*
 import java.nio.ByteBuffer
 
 @Suppress("MemberVisibilityCanBePrivate", "unused")

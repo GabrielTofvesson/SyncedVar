@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.annotation
 
 import net.tofvesson.reflect.*
 
@@ -31,7 +31,7 @@ enum class SyncFlag {
 
         fun createFlag(name: String): SyncFlag {
             // Do duplication check
-            if(getByName(name)!=null) throw IllegalArgumentException("Flag \"$name\" is already registered!")
+            if(getByName(name) !=null) throw IllegalArgumentException("Flag \"$name\" is already registered!")
 
             // Get unsafe
             val unsafe = getUnsafe()

@@ -1,4 +1,4 @@
-package net.tofvesson.networking
+package net.tofvesson.math
 
 import java.nio.ByteBuffer
 import kotlin.experimental.or
