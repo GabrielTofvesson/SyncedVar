@@ -3,8 +3,19 @@ package net.tofvesson.reflect
 import java.lang.reflect.Field
 
 fun Field.setStaticFinalValue(value: Any?){
-    val factory = Class.forName("jdk.internal.reflect.UnsafeFieldAccessorFactory").getDeclaredMethod("newFieldAccessor", Field::class.java, Boolean::class.java)
-    val isReadonly = Class.forName("jdk.internal.reflect.UnsafeQualifiedStaticFieldAccessorImpl").getDeclaredField("isReadOnly")
+    var pkg = "jdk.internal.relfect"
+    try
+    {
+        Class.forName("$pkg.UnsafeFieldAccessorFactory")
+    }
+    catch(e: ClassNotFoundException)
+    {
+        pkg = "sun.reflect"
+    }
+
+
+    val factory = Class.forName("$pkg.UnsafeFieldAccessorFactory").getDeclaredMethod("newFieldAccessor", Field::class.java, Boolean::class.java)
+    val isReadonly = Class.forName("$pkg.UnsafeQualifiedStaticFieldAccessorImpl").getDeclaredField("isReadOnly")
     isReadonly.forceAccessible = true
     factory.forceAccessible = true
     val overrideAccessor = Field::class.java.getDeclaredField("overrideFieldAccessor")

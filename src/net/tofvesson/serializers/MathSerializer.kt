@@ -32,6 +32,8 @@ class MathSerializer: Serializer(arrayOf(
     override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, state: WriteState, fieldType: Class<*>) {
         when (fieldType) {
             Vector3::class.java -> {
+                val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java) ?: return
+
                 val vector = field.access().get(owner) as Vector3
                 val xDiff = xField.get(vector) as DiffTracked<Float>
                 val yDiff = yField.get(vector) as DiffTracked<Float>
@@ -41,7 +43,7 @@ class MathSerializer: Serializer(arrayOf(
                 val c3 = flags.contains(compressedRotationVector3)
                 if ((c1 and c2) or (c2 and c3) or (c1 and c3)) throw MismatchedFlagException("Cannot have more than one rotation compression flag!")
 
-                state.registerHeader(3)
+                state.registerBits(3)
                 when {
                     c1 || c2 || c3 -> {
                         val bytes =
@@ -56,7 +58,6 @@ class MathSerializer: Serializer(arrayOf(
                                 .registerBytes(if (zDiff.hasChanged()) varIntSize(zDiff.value.encodeRotation(bytes).toLong()) else 0)
                     }
                     else -> {
-                        val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
                         if (xDiff.hasChanged()) floatSerializer.computeSizeExplicit(diffValue, flags, xDiff, state, Float::class.java)
                         if (yDiff.hasChanged()) floatSerializer.computeSizeExplicit(diffValue, flags, yDiff, state, Float::class.java)
                         if (zDiff.hasChanged()) floatSerializer.computeSizeExplicit(diffValue, flags, zDiff, state, Float::class.java)
@@ -67,9 +68,12 @@ class MathSerializer: Serializer(arrayOf(
         }
     }
 
-    override fun serializeExplicit(field: Field, _flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WriteBuffer, fieldType: Class<*>) {
+    override fun serializeExplicit(field: Field, _flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WBuffer, fieldType: Class<*>) {
         when (fieldType) {
             Vector3::class.java -> {
+                val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java) ?: return
+                val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java) ?: return
+
                 var flags = _flags
                 val vector = field.access().get(owner) as Vector3
                 val c1 = flags.contains(compressedRotationVector1)
@@ -81,13 +85,12 @@ class MathSerializer: Serializer(arrayOf(
 
                 if ((c1 and c2) or (c2 and c3) or (c1 and c3)) throw MismatchedFlagException("Cannot have more than one rotation compression flag!")
 
-                writeBuffer.writeHeader(xDiff.hasChanged())
-                writeBuffer.writeHeader(yDiff.hasChanged())
-                writeBuffer.writeHeader(zDiff.hasChanged())
+                writeBuffer.writeBit(xDiff.hasChanged())
+                writeBuffer.writeBit(yDiff.hasChanged())
+                writeBuffer.writeBit(zDiff.hasChanged())
 
                 when {
                     c1 || c2 || c3 -> {
-                        val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
                         val bytes =
                                 when {
                                     c1 -> 1
@@ -123,7 +126,6 @@ class MathSerializer: Serializer(arrayOf(
                         if (zDiff.hasChanged()) intSerializer.serializeExplicit(Holder.valueField, flags, zHolder, writeBuffer, Int::class.java)
                     }
                     else -> {
-                        val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
 
                         if (xDiff.hasChanged()) floatSerializer.serializeExplicit(diffValue, _flags, xDiff, writeBuffer, Float::class.java)
                         if (yDiff.hasChanged()) floatSerializer.serializeExplicit(diffValue, _flags, yDiff, writeBuffer, Float::class.java)
@@ -135,9 +137,12 @@ class MathSerializer: Serializer(arrayOf(
         }
     }
 
-    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: ReadBuffer, fieldType: Class<*>) {
+    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: RBuffer, fieldType: Class<*>) {
         when (fieldType) {
             Vector3::class.java -> {
+                val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java) ?: return
+                val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java) ?: return
+
                 val vector = field.access().get(owner) as Vector3
                 val c1 = flags.contains(compressedRotationVector1)
                 val c2 = flags.contains(compressedRotationVector2)
@@ -153,37 +158,35 @@ class MathSerializer: Serializer(arrayOf(
 
                 when {
                     c1 || c2 || c3 -> {
-                        val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
                         val bytes = if (c1) 1 else if (c2) 2 else 3
 
-                        if (readBuffer.readHeader()) {
+                        if (readBuffer.readBit()) {
                             intSerializer.deserializeExplicit(Holder.valueField, flags, xHolder, readBuffer, Int::class.java)
                             xDiff.value = (xHolder.value as Int).decodeRotation(bytes)
                             xDiff.clearChangeState()
                         }
-                        if (readBuffer.readHeader()) {
+                        if (readBuffer.readBit()) {
                             intSerializer.deserializeExplicit(Holder.valueField, flags, yHolder, readBuffer, Int::class.java)
                             yDiff.value = (yHolder.value as Int).decodeRotation(bytes)
                             yDiff.clearChangeState()
                         }
-                        if (readBuffer.readHeader()) {
+                        if (readBuffer.readBit()) {
                             intSerializer.deserializeExplicit(Holder.valueField, flags, zHolder, readBuffer, Int::class.java)
                             zDiff.value = (zHolder.value as Int).decodeRotation(bytes)
                             zDiff.clearChangeState()
                         }
                     }
                     else -> {
-                        val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
 
-                        if (readBuffer.readHeader()){
+                        if (readBuffer.readBit()){
                             floatSerializer.deserializeExplicit(diffValue, flags, xField.get(vector), readBuffer, Float::class.java)
                             xDiff.clearChangeState()
                         }
-                        if (readBuffer.readHeader()){
+                        if (readBuffer.readBit()){
                             floatSerializer.deserializeExplicit(diffValue, flags, yField.get(vector), readBuffer, Float::class.java)
                             yDiff.clearChangeState()
                         }
-                        if (readBuffer.readHeader()){
+                        if (readBuffer.readBit()){
                             floatSerializer.deserializeExplicit(diffValue, flags, zField.get(vector), readBuffer, Float::class.java)
                             zDiff.clearChangeState()
                         }
@@ -192,5 +195,11 @@ class MathSerializer: Serializer(arrayOf(
             }
             else -> throwInvalidType(fieldType)
         }
+    }
+
+    override fun canSerialize(obj: Any?, flags: Array<out SyncFlag>, type: Class<*>): Boolean {
+        SyncHandler.getCompatibleSerializer(Float::class.java) ?: return false
+        SyncHandler.getCompatibleSerializer(Int::class.java) ?: return false
+        return Vector3::class.java.isAssignableFrom(type)
     }
 }

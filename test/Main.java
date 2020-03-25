@@ -2,8 +2,11 @@ import net.tofvesson.annotation.SyncedVar;
 import net.tofvesson.data.DiffTracked;
 import net.tofvesson.data.DiffTrackedArray;
 import net.tofvesson.data.SyncHandler;
+import net.tofvesson.math.ArithmeticKt;
 import net.tofvesson.serializers.MathSerializer;
 import net.tofvesson.math.Vector3;
+
+import java.nio.ByteBuffer;
 
 public class Main {
     @SyncedVar("NonNegative")
@@ -28,12 +31,16 @@ public class Main {
     public static DiffTracked<Integer> tracker = new DiffTracked<>(5, Integer.class);
 
     @SyncedVar
-    public static DiffTrackedArray<Long> tracker2 = new DiffTrackedArray<>(Long.class, 8, i -> (long)i);
+    public static DiffTrackedArray<Long> tracker2 = new DiffTrackedArray<>(Long.class, 8, i -> (long)i); //14,11
 
     @SyncedVar({MathSerializer.flagLowCompressionRotation, MathSerializer.flagPassiveCompress})
     public static Vector3 lookDirection = new Vector3(60, 90, 80);
 
     public static void main(String[] args){
+        ByteBuffer buf = ByteBuffer.allocate(256);
+        ArithmeticKt.writeVarInt(buf, 0, -260);
+
+
         Main testObject = new Main();
 
         SyncHandler sync = new SyncHandler();

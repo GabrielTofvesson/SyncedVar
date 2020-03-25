@@ -6,6 +6,7 @@ import kotlin.math.roundToInt
 
 fun varIntSize(value: Long): Int =
         when {
+            value < 0 -> 9
             value <= 240 -> 1
             value <= 2287 -> 2
             value <= 67823 -> 3
@@ -64,19 +65,19 @@ fun writeVarInt(buffer: ByteBuffer, offset: Int, value: Long){
             }
             buffer.put(offset, header.toByte())
             val max = header - 247
-            for (i in 0..(max-1)) buffer.put(offset+i+1, (value shr (i shl 3)).toByte())
+            for (i in 0..(max-1)) buffer.put(offset+i+1, (value ushr (i shl 3)).toByte())
         }
     }
 }
 
 fun writeInt(buffer: ByteArray, offset: Int, value: Long, bytes: Int){
     for(i in 0..(bytes-1))
-        buffer[offset+i] = (value shr (8*i)).toByte()
+        buffer[offset+i] = (value ushr (8*i)).toByte()
 }
 
 fun writeInt(buffer: ByteBuffer, offset: Int, value: Long, bytes: Int){
     for(i in 0..(bytes-1))
-        buffer.put(offset+i, (value shr (8*i)).toByte())
+        buffer.put(offset+i, (value ushr (8*i)).toByte())
 }
 
 fun readVarInt(buffer: ByteArray, offset: Int): Long {
@@ -106,13 +107,13 @@ fun readVarInt(buffer: ByteBuffer, offset: Int): Long {
 }
 
 fun writeBit(bit: Boolean, buffer: ByteArray, index: Int){
-    buffer[index shr 3] = buffer[index shr 3].or(((if(bit) 1 else 0) shl (index and 7)).toByte())
+    buffer[index ushr 3] = buffer[index ushr 3].or(((if(bit) 1 else 0) shl (index and 7)).toByte())
 }
-fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
+fun readBit(buffer: ByteArray, index: Int): Boolean = buffer[index ushr 3].toInt() and (1 shl (index and 7)) != 0
 fun writeBit(bit: Boolean, buffer: ByteBuffer, index: Int){
-    buffer.put(index shr 3, buffer[index shr 3] or (((if(bit) 1 else 0) shl (index and 7)).toByte()))
+    buffer.put(index ushr 3, buffer[index ushr 3] or (((if(bit) 1 else 0) shl (index and 7)).toByte()))
 }
-fun readBit(buffer: ByteBuffer, index: Int): Boolean = buffer[index shr 3].toInt() and (1 shl (index and 7)) != 0
+fun readBit(buffer: ByteBuffer, index: Int): Boolean = buffer[index ushr 3].toInt() and (1 shl (index and 7)) != 0
 
 private val converter = ByteBuffer.allocateDirect(8)
 
@@ -140,17 +141,17 @@ fun longToDouble(value: Long): Double =
             return@synchronized converter.getDouble(0)
         }
 
-fun swapEndian(value: Short) = ((value.toInt() shl 8) or ((value.toInt() shr 8) and 255)).toShort()
+fun swapEndian(value: Short) = ((value.toInt() shl 8) or ((value.toInt() ushr 8) and 255)).toShort()
 fun swapEndian(value: Int) =
-                ((value shr 24) and 0xFF) or
-                ((value shr 8) and 0xFF00) or
+                ((value ushr 24) and 0xFF) or
+                ((value ushr 8) and 0xFF00) or
                 ((value shl 24) and -16777216) or
                 ((value shl 8) and 0xFF0000)
 fun swapEndian(value: Long) =
         ((value shr 56) and 0xFFL) or
-                ((value shr 40) and 0xFF00L) or
-                ((value shr 24) and 0xFF0000L) or
-                ((value shr 8) and 0xFF000000L) or
+                ((value ushr 40) and 0xFF00L) or
+                ((value ushr 24) and 0xFF0000L) or
+                ((value ushr 8) and 0xFF000000L) or
                 ((value shl 56) and -72057594037927936L) or
                 ((value shl 40) and 0xFF000000000000L) or
                 ((value shl 24) and 0xFF0000000000L) or
@@ -159,7 +160,7 @@ fun swapEndian(value: Long) =
 fun bitConvert(value: Int): Long = value.toLong() and 0xFFFFFFFFL
 
 fun zigZagEncode(value: Long): Long = (value shl 1) xor (value shr 63)
-fun zigZagDecode(value: Long): Long = (value shr 1) xor ((value shl 63) shr 63)
+fun zigZagDecode(value: Long): Long = (value ushr 1) xor ((value shl 63) shr 63)
 
 fun Float.encodeRotation(byteCount: Int): Int {
     if(this < 0 || this > 360) throw RotationOutOfBoundsException()

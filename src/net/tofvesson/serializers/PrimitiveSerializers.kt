@@ -1,9 +1,9 @@
 package net.tofvesson.serializers
 
 import net.tofvesson.annotation.SyncFlag
-import net.tofvesson.data.ReadBuffer
+import net.tofvesson.data.RBuffer
 import net.tofvesson.data.Serializer
-import net.tofvesson.data.WriteBuffer
+import net.tofvesson.data.WBuffer
 import net.tofvesson.data.WriteState
 import net.tofvesson.math.*
 import net.tofvesson.reflect.*
@@ -75,7 +75,7 @@ class PrimitiveSerializer private constructor() : Serializer(arrayOf(
             field: Field,
             flags: Array<out SyncFlag>,
             owner: Any?,
-            writeBuffer: WriteBuffer,
+            writeBuffer: WBuffer,
             fieldType: Class<*>
     ){
         when (fieldType) {
@@ -104,7 +104,7 @@ class PrimitiveSerializer private constructor() : Serializer(arrayOf(
             field: Field,
             flags: Array<out SyncFlag>,
             owner: Any?,
-            readBuffer: ReadBuffer,
+            readBuffer: RBuffer,
             fieldType: Class<*>
     ) =
             when(fieldType){
@@ -127,4 +127,7 @@ class PrimitiveSerializer private constructor() : Serializer(arrayOf(
                     else field.setDoubleAdaptive(owner, readBuffer.readPackedDouble(flags.contains(SyncFlag.FloatEndianSwap)))
                 else -> throwInvalidType(fieldType)
             }
+
+    override fun canSerialize(obj: Any?, flags: Array<out SyncFlag>, type: Class<*>) =
+            getRegisteredTypes().firstOrNull { it == type } != null
 }

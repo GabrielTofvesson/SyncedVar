@@ -41,12 +41,12 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
         }
 
         fun clearSerializers() = serializers.clear()
-        fun getRegisteredSerializers() = serializers.toArray()
-        fun getCompatibleSerializer(type: Class<*>): Serializer {
+        fun getRegisteredSerializers() = serializers.toTypedArray()
+        fun getCompatibleSerializer(type: Class<*>): Serializer? {
             for(serializer in serializers)
                 if(serializer.canSerialize(type))
                     return serializer
-            throw UnsupportedTypeException("Cannot find a compatible serializer for $type")
+            return null
         }
 
 
@@ -78,7 +78,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
         for(entry in toSync)
             if(entry is Class<*>) computeClassSize(entry, writeState)
             else computeObjectSize(entry, writeState)
-        val writeBuffer = WriteBuffer(writeState)
+        val writeBuffer = WBuffer(null, 0, writeState)
         for(entry in toSync)
             if(entry is Class<*>) readClass(entry, writeBuffer)
             else readObject(entry, writeBuffer)
@@ -91,7 +91,7 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
         for(entry in toSync)
             if(entry is Class<*>) computeClassSize(entry, writeState)
             else computeObjectSize(entry, writeState)
-        val readBuffer = ReadBuffer(writeState, ByteBuffer.wrap(syncData), bitOffset)
+        val readBuffer = RBuffer(ByteBuffer.wrap(syncData), bitOffset.toLong())
         for(entry in toSync)
             if(entry is Class<*>) writeClass(entry, readBuffer)
             else writeObject(entry, readBuffer)
@@ -132,22 +132,22 @@ class SyncHandler(private val permissiveMismatchCheck: Boolean = false) {
     private fun computeTypeSize(type: Class<*>, value: Any?, writeState: WriteState) {
         for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.access().type)
-                    .computeSize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeState)
+                    ?.computeSize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeState)
     }
 
-    private fun readObject(value: Any, writeBuffer: WriteBuffer) = readType(value.javaClass, value, writeBuffer)
-    private fun readClass(value: Class<*>, writeBuffer: WriteBuffer) = readType(value, null, writeBuffer)
-    private fun readType(type: Class<*>, value: Any?, writeBuffer: WriteBuffer) {
+    private fun readObject(value: Any, writeBuffer: WBuffer) = readType(value.javaClass, value, writeBuffer)
+    private fun readClass(value: Class<*>, writeBuffer: WBuffer) = readType(value, null, writeBuffer)
+    private fun readType(type: Class<*>, value: Any?, writeBuffer: WBuffer) {
         for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.type)
-                    .serialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeBuffer)
+                    ?.serialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, writeBuffer)
     }
 
-    private fun writeObject(value: Any, readBuffer: ReadBuffer) = writeType(value.javaClass, value, readBuffer)
-    private fun writeClass(value: Class<*>, readBuffer: ReadBuffer) = writeType(value, null, readBuffer)
-    private fun writeType(type: Class<*>, value: Any?, readBuffer: ReadBuffer) {
+    private fun writeObject(value: Any, readBuffer: RBuffer) = writeType(value.javaClass, value, readBuffer)
+    private fun writeClass(value: Class<*>, readBuffer: RBuffer) = writeType(value, null, readBuffer)
+    private fun writeType(type: Class<*>, value: Any?, readBuffer: RBuffer) {
         for(field in collectSyncable(type, value == null))
             getCompatibleSerializer(field.type)
-                    .deserialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, readBuffer)
+                    ?.deserialize(field, SyncFlag.parse(field.getAnnotation(SyncedVar::class.java).value), value, readBuffer)
     }
 }

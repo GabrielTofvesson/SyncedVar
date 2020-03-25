@@ -3,7 +3,7 @@ package net.tofvesson.data
 class DiffTrackedArray<T>(val elementType: Class<T>, val size: Int, gen: (Int) -> T) {
 
     val values: Array<T> = java.lang.reflect.Array.newInstance(elementType, size) as Array<T>
-    val changeMap = Array(size) {false}
+    val changeMap = BooleanArray(size) {false}
 
     init{
         for(index in 0 until size)

@@ -2,6 +2,7 @@ package net.tofvesson.serializers
 
 import net.tofvesson.annotation.SyncFlag
 import net.tofvesson.data.*
+import net.tofvesson.math.varIntSize
 import java.lang.reflect.Field
 
 @Suppress("MemberVisibilityCanBePrivate")
@@ -23,13 +24,14 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
     override fun computeSizeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, state: WriteState, fieldType: Class<*>) {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
         val holder = Holder(null)
+
         when (fieldType) {
             BooleanArray::class.java -> state.registerBits(arrayLength)
             ByteArray::class.java -> state.registerBytes(arrayLength)
             ShortArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 2)
                 else {
-                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java)
+                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java) ?: return
                     for (value in field.get(owner) as ShortArray) {
                         holder.value = value
                         shortSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Short::class.java)
@@ -38,7 +40,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             IntArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 4)
                 else {
-                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
+                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java) ?: return
                     for (value in field.get(owner) as IntArray) {
                         holder.value = value
                         intSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Int::class.java)
@@ -47,7 +49,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             LongArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 8)
                 else {
-                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java)
+                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java) ?: return
                     for (value in field.get(owner) as LongArray) {
                         holder.value = value
                         longSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Long::class.java)
@@ -56,7 +58,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             FloatArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 4)
                 else {
-                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
+                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java) ?: return
                     for (value in field.get(owner) as FloatArray) {
                         holder.value = value
                         floatSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Float::class.java)
@@ -65,7 +67,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
             DoubleArray::class.java ->
                 if(flags.contains(SyncFlag.NoCompress)) state.registerBytes(arrayLength * 8)
                 else {
-                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java)
+                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java) ?: return
                     for (value in field.get(owner) as DoubleArray) {
                         holder.value = value
                         doubleSerializer.computeSizeExplicit(Holder.valueField, flags, holder, state, Double::class.java)
@@ -73,12 +75,16 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                 }
             else -> throwInvalidType(fieldType)
         }
+
+        if(!flags.contains(knownSize))
+            state.registerBytes(varIntSize(arrayLength.toLong()))
     }
 
-    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WriteBuffer, fieldType: Class<*>) {
+    override fun serializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, writeBuffer: WBuffer, fieldType: Class<*>) {
         val arrayLength = java.lang.reflect.Array.getLength(field.get(owner))
         val holder = Holder(null)
-        if(!flags.contains(knownSize)) writeBuffer.writePackedInt(arrayLength, true)
+        if(!flags.contains(knownSize))
+            writeBuffer.writePackedInt(arrayLength, true)
         when (fieldType) {
             BooleanArray::class.java ->
                 for(value in field.get(owner) as BooleanArray)
@@ -91,7 +97,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                     for(value in field.get(owner) as ShortArray)
                         writeBuffer.writeShort(value)
                 else {
-                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java)
+                    val shortSerializer = SyncHandler.getCompatibleSerializer(Short::class.java) ?: return
                     for (value in field.get(owner) as ShortArray) {
                         holder.value = value
                         shortSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
@@ -102,7 +108,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                     for(value in field.get(owner) as IntArray)
                         writeBuffer.writeInt(value)
                 else {
-                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java)
+                    val intSerializer = SyncHandler.getCompatibleSerializer(Int::class.java) ?: return
                     for (value in field.get(owner) as IntArray) {
                         holder.value = value
                         intSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
@@ -113,7 +119,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                     for(value in field.get(owner) as LongArray)
                         writeBuffer.writeLong(value)
                 else {
-                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java)
+                    val longSerializer = SyncHandler.getCompatibleSerializer(Long::class.java) ?: return
                     for (value in field.get(owner) as LongArray) {
                         holder.value = value
                         longSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
@@ -124,7 +130,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                     for(value in field.get(owner) as FloatArray)
                         writeBuffer.writeFloat(value)
                 else {
-                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java)
+                    val floatSerializer = SyncHandler.getCompatibleSerializer(Float::class.java) ?: return
                     for (value in field.get(owner) as FloatArray) {
                         holder.value = value
                         floatSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
@@ -135,7 +141,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
                     for(value in field.get(owner) as DoubleArray)
                         writeBuffer.writeDouble(value)
                 else {
-                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java)
+                    val doubleSerializer = SyncHandler.getCompatibleSerializer(Double::class.java) ?: return
                     for (value in field.get(owner) as DoubleArray) {
                         holder.value = value
                         doubleSerializer.serializeExplicit(Holder.valueField, flags, holder, writeBuffer, fieldType)
@@ -145,7 +151,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         }
     }
 
-    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: ReadBuffer, fieldType: Class<*>) {
+    override fun deserializeExplicit(field: Field, flags: Array<out SyncFlag>, owner: Any?, readBuffer: RBuffer, fieldType: Class<*>) {
         val localLength = java.lang.reflect.Array.getLength(field.get(owner))
         val arrayLength =
                 if(flags.contains(knownSize)) localLength
@@ -215,4 +221,7 @@ class PrimitiveArraySerializer private constructor(): Serializer(arrayOf(
         }
         if(arrayLength!=localLength) field.set(owner, target)
     }
+
+    override fun canSerialize(obj: Any?, flags: Array<out SyncFlag>, type: Class<*>) =
+            getRegisteredTypes().firstOrNull { it == type } != null
 }

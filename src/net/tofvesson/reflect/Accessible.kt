@@ -19,6 +19,6 @@ fun <T> T.access(): T where T: AccessibleObject {
 
 fun getUnsafe(): Unsafe{
     val theUnsafe = Unsafe::class.java.getDeclaredField("theUnsafe")
-    theUnsafe.trySetAccessible()
+    theUnsafe.isAccessible = true
     return theUnsafe.get(null) as Unsafe
 }
